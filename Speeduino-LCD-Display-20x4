@@ -1,0 +1,276 @@
+#include <LiquidCrystal_I2C.h> // dont forget add Lib on Lib Manager
+LiquidCrystal_I2C lcd = LiquidCrystal_I2C(0x27, 20, 4); 
+#define EMS_Serial     Serial3         // make sure your board have serial port // here is use MEGA 2560
+
+#define SQUIRT               1
+#define ENGINE               2
+#define DWELL                3
+#define MAP_LB               4
+#define MAP_HB               5
+#define IAT_PLUS_OFFSET      6
+#define COOLANT_PLUS_OFFSET  7
+#define BAT_CORRECTION       8
+#define BATTERY10            9
+#define OXIGEN              10
+#define EGO_CORRECTION      11
+#define IAT_CORRECTION      12
+#define WUE_CORRECTION      13
+#define RPM_LB              14
+#define RPM_HB              15
+#define TAE_AMOUNT          16
+#define CORRECTIONS         17
+#define VE                  18
+
+#define AFR_TARGET          19
+#define PW1_LB              20
+#define PW1_HB              21
+#define TPS_DOT             22
+#define ADVANCE_ANGLE       23
+#define TPS                 24
+#define LOOPS_PER_SECOND_LB 25
+#define LOOPS_PER_SECOND_HB 26
+#define FREE_RAM_LB         27
+#define FREE_RAM_HB         28
+#define BOOST_TARGET        29
+#define BOOST_DUTY          30
+#define SPARK               31
+#define RPM_DOT_LB          32
+#define RPM_DOT_HB          33
+#define ETHANOL_PCT         34
+#define FLEX_CORRECTION     35
+#define FLEX_IGN_CORRECTION 36
+#define IDLE_LOAD           37
+#define TEST_OUTPUTS        38
+#define OXIGEN2             39
+#define BARO                40
+
+static uint32_t oldtime = millis();
+uint8_t speedyResponse[100]; //The data buffer for the Serial data. This is longer than needed, just in case
+uint8_t byteNumber[2];  // pointer to which uint8_t number we are reading currently
+
+unsigned long previousMillisLCD;
+const unsigned long intervalLCD = 150;
+uint8_t readiat; // clt doesn't need to be updated very ofter so
+int iat;   // to store coolant temp
+uint8_t readclt; // clt doesn't need to be updated very ofter so
+int clt;   // to store coolant temp
+int tps;
+int flex;
+float bat;
+int adv;
+unsigned int rpm;  //rpm and PW from speeduino
+float afr;
+int mapData;
+int8_t psi;
+float afrConv;
+uint8_t cmdAdata[50] ; 
+
+char numBuf[21];
+uint32_t old_ts;
+
+#define BYTES_TO_READ 74
+#define SERIAL_TIMEOUT 300
+float rps;
+boolean sent = false;
+boolean received = false;
+uint32_t sendTimestamp;
+const char ADVANCE_FORMAT[] = {'%', '3', 'd', char(223), ' ', char(0)};
+
+
+void setup() {
+  
+ 
+  lcd.init();
+  lcd.backlight();
+  lcd.setCursor(4, 0);
+  lcd.print("DEX AIRCRAFT");
+  lcd.setCursor(9, 2);
+  lcd.print("EMS");
+  delay( 3000 );
+  lcd.clear();
+
+  lcd.setCursor(5, 0);
+  lcd.print("Loading...");
+  delay(500);
+
+  lcd.clear();
+  EMS_Serial.begin(115200);
+}
+
+
+
+
+
+void loop() {
+  
+  requestData();
+//if (check == 119 || check == 122){
+   if(received) {
+      displayData();
+        //drawData();
+       // received = false;
+    }else {
+      LostConnection();
+    }
+//}
+
+
+  
+}
+
+
+
+void lcdprint(byte col, byte row, int num, char fmt[]) {
+  lcd.setCursor(col, row);
+  sprintf (numBuf, fmt, num);
+  lcd.print(numBuf);
+}
+
+void requestData() {
+  if(sent && EMS_Serial.available()) {
+    
+    if(EMS_Serial.read() == 'A') {
+      uint8_t bytesRead = EMS_Serial.readBytes(speedyResponse, BYTES_TO_READ);
+        if(bytesRead != BYTES_TO_READ) {
+          processData();
+          for(uint8_t i = 0; i < bytesRead; i++) {
+          }
+          received = true;
+          clearRX();
+          } else {
+          processData();
+          received = true;
+          rps = 1000.0/(millis() - sendTimestamp);
+          }
+          sent = false;
+    } else EMS_Serial.read();
+    
+  } else if(!sent) {
+    EMS_Serial.write('A');
+    sent = true;
+    sendTimestamp = millis();
+  } else if(sent && millis() - sendTimestamp > SERIAL_TIMEOUT) {
+     
+    sent = false;
+  }
+}
+
+
+void clearRX() {
+  while(EMS_Serial.available()) EMS_Serial.read();
+}
+
+ 
+//display the needed values in serial monitor for debugging
+void displayData() {
+
+  lcd.setCursor(0,0);
+  lcd.print("RPM:");
+  if(millis() - previousMillisLCD >= intervalLCD){
+  lcd.print(rpm);
+  lcd.print("    ");
+  previousMillisLCD = millis();
+  }
+
+  
+  lcd.setCursor(0,1);
+  lcd.print("MAP:");
+  lcd.print(mapData);
+  lcd.print("Kpa");
+  lcd.print(" ");
+
+
+  lcd.setCursor(0,2);
+  lcd.print("BRV:");
+  lcd.print( convertFloatToString(bat).substring(0, convertFloatToString(bat).length() - 1));
+  lcd.print("V");
+  lcd.print(" ");
+      
+
+  lcd.setCursor(0,3);
+  lcd.print("TPS:");
+  lcd.print(tps / 2);
+  lcd.print("%");
+  lcd.print(" ");
+ 
+
+
+
+
+  lcd.setCursor(11,0);
+  lcd.print("CLT:");
+  lcd.print(clt-40);
+  lcd.print("\xDF" "C");
+  lcd.print(" ");
+
+
+  lcd.setCursor(11,1);
+  lcd.print("IAT:");
+  lcd.print(iat-40);
+  lcd.print("\xDF" "C");
+  lcd.print(" ");
+
+
+
+
+  lcd.setCursor(11,2);
+  lcd.print("ADV:");
+  lcd.print(adv);
+  lcd.print("\xDF");
+  lcd.print(" ");
+
+char buf[6];
+  lcd.setCursor(11,3);
+  lcd.print("AFR:");
+ lcd.print( convertFloatToString(afr).substring(0, convertFloatToString(afr).length() - 1));
+ //lcd.print(afr);
+  lcd.print("");
+
+
+}
+
+String convertFloatToString(float temperature)
+{ // begin function
+
+  char temp[10];
+  String tempAsString;
+    
+    // perform conversion
+    dtostrf(temperature,1,2,temp);
+    
+    // create string object
+  tempAsString = String(temp);
+  
+  return tempAsString;
+  
+} // end function
+ 
+void drawData() { //Setup the mock area for drawing this info on the OLED
+  
+}
+
+void processData() {  // necessary conversion for the data before sending to screen
+ 
+  rpm = ((speedyResponse [RPM_HB] << 8) | (speedyResponse [RPM_LB])); 
+  // rpm low & high (Int) TBD: probaply no need to split high and low bytes etc. this could be all simpler
+  afr =speedyResponse[OXIGEN]/10.0;
+  mapData = ((speedyResponse [MAP_HB] << 8) | (speedyResponse [MAP_LB]));
+  psi = (mapData / 6.895);
+  clt = speedyResponse[COOLANT_PLUS_OFFSET];
+ 
+  iat = speedyResponse[IAT_PLUS_OFFSET];
+  tps = speedyResponse[TPS];
+  bat = speedyResponse[BATTERY10]/10.0;
+  adv = speedyResponse[ADVANCE_ANGLE];
+  flex = speedyResponse[ETHANOL_PCT];
+  
+}
+
+
+void LostConnection(){
+        lcd.setCursor(0, 0);
+      lcd.print("Check Connection..!!");
+      
+      lcd.setCursor(2, 2);
+      lcd.print("Serial Not Found");
+  }
